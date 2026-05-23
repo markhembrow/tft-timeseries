@@ -252,3 +252,61 @@ def test_static_encoder_no_nan():
     for k, v in out.items():
         assert not torch.any(torch.isnan(v)),  f"out['{k}'] contains NaN"
         assert not torch.any(torch.isinf(v)),  f"out['{k}'] contains Inf"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# GatedResidualNetwork tests  (real implementation from model.py)
+# Note: this implementation uses SiLU, not ELU as in the paper.
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def _get_grn():
+    mod = _import_model()
+    assert hasattr(mod, "GatedResidualNetwork"), \
+        "GatedResidualNetwork missing from tft_timeseries.model"
+    return mod.GatedResidualNetwork
+
+
+# ── 1. Forward-pass output shape ──────────────────────────────────────────────
+
+def test_grn_output_shape():
+    """GRN must preserve the input dimension: output is (B, D_in)."""
+    GRN = _get_grn()
+    B, D = 4, 32
+    xi = torch.randn(B, D)
+    grn = GRN(D, d_hidden=64)
+    out = grn(xi)
+    assert out.shape == (B, D), (
+        f"Expected ({B}, {D}), got {tuple(out.shape)}"
+    )
+
+
+# ── 2. No NaN / Inf in output over multiple random inputs ────────────────────
+
+def test_grn_no_nan_no_inf():
+    """GRN forward pass must never produce NaN or Inf for any input."""
+    GRN = _get_grn()
+    B, D = 4, 32
+    grn = GRN(D, d_hidden=64)
+    for _ in range(20):
+        xi = torch.randn(B, D)
+        out = grn(xi)
+        assert not torch.any(torch.isnan(out)),  "Output contains NaN"
+        assert not torch.any(torch.isinf(out)),  "Output contains Inf"
+
+
+# ── 3. Context changes the output ────────────────────────────────────────────
+
+def test_grn_with_context_different_output():
+    """Feeding a context vector must produce a different output than without context."""
+    GRN = _get_grn()
+    B, D = 4, 32
+    grn = GRN(D, d_ctx=D, d_hidden=64)
+    xi  = torch.randn(B, D)
+    ctx = torch.randn(B, D)
+    out_no_ctx = grn(xi)
+    out_ctx    = grn(xi, context=ctx)
+    assert not torch.allclose(out_no_ctx, out_ctx, atol=1e-4), (
+        "Output with context is identical to output without context; "
+        "context gating is not working."
+    )
