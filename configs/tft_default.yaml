@@ -1,0 +1,11 @@
+num_static: 2
+num_past: 4
+num_future: 2
+d_model: 32
+d_hidden: 64
+num_layers: 1
+past_len: 24
+future_len: 12
+num_quantiles: 3
+quantiles: [0.1, 0.5, 0.9]
+dropout: 0.1

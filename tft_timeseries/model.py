@@ -139,10 +139,15 @@ class VariableSelectionNetwork(nn.Module):
         self.project = nn.Linear(d_model, d_model)
 
     # ------------------------------------------------------------------
-    def _build_flatten(self, d_in: int) -> None:
+    def _build_flatten(self, d_in: int, xi_device: torch.device | None = None) -> None:
         """Lazily build the flatten→project layer once ``d_in`` is known."""
-        if not hasattr(self, "_flat_proj"):
-            self._flat_proj = nn.Linear(self._num_inputs * d_in, self._num_inputs * self._d_model)
+        if not hasattr(self, "_flat_proj") or self._flat_proj is None:
+            self._flat_proj = nn.Linear(
+                self._num_inputs * d_in,
+                self._num_inputs * self._d_model,
+            )
+            if xi_device is not None and self._flat_proj.weight.device != xi_device:
+                self._flat_proj = self._flat_proj.to(xi_device)
 
     # ------------------------------------------------------------------
     def forward(
@@ -169,7 +174,7 @@ class VariableSelectionNetwork(nn.Module):
         )
 
         # Step 1 – lazy init projecting linear + flatten
-        self._build_flatten(D_in)
+        self._build_flatten(D_in, xi_device=xi.device)
         flat = self.flatten(xi)                          # (B, S*D_in)
         var_embeds = self._flat_proj(flat).view(B, S, self._d_model)  # (B, S, D_model)
 
@@ -610,15 +615,20 @@ class TFTModel(nn.Module):
 
         # ── 2. VSN on past dynamic features ───────────────────────────────────
         # Apply VSN independently at every encoder timestep.
-        # VSN expects (B_flat, S, D_in) where S = num_inputs.
-        past_flat   = past_features.reshape(B * T, self.config.num_past, 1)   # (B*T, S_past, 1)
+        # VSN input: (B_flat, S, D_in=1) where B_flat = B*T, S = num_past
+        past_flat = past_features.reshape(B * T, self.config.num_past, 1)   # (B*T, S_past, 1)
         vsn_past_raw = self.past_vsn(past_flat)                               # (B*T, D)
         past_vsn = vsn_past_raw.reshape(B, T, D)                               # (B, T, D)
 
-        # ── 3. VSN on future known features ─────────────────────────────────
-        fut_flat     = known_future.reshape(B * H, self.config.num_future, 1)  # (B*H, S_known, 1)
-        vsn_fut_raw  = self.future_vsn(fut_flat)                               # (B*H, D)
-        fut_vsn      = vsn_fut_raw.reshape(B, H, D)                            # (B, H, D)
+        # ── 3. VSN on horizon-time known features ──────────────────────────
+        # known_future from DM is (B, T+H, S_known) — we take the last H steps.
+        # VSN input: (B_flat, S, D_in=1) where B_flat = B*H, S = num_future.
+        known_horizon    = known_future[:, -self.config.future_len :, :]  # (B, H, S_known)
+        fut_flat         = known_horizon.reshape(                          # (B*H, S_known, 1)
+            B * self.config.future_len, self.config.num_future, 1
+        )
+        vsn_fut_raw  = self.future_vsn(fut_flat)                             # (B*H, D)
+        fut_vsn      = vsn_fut_raw.reshape(B, self.config.future_len, D)     # (B, H, D)
 
         # ── 4. Temporal Fusion Decoder ───────────────────────────────────────
         # past_vsn is (B, T, D) — the encoder-only sequence.
