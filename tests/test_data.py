@@ -23,3 +23,29 @@ def test_dataset_length():
                            np.zeros((3,6,1)), np.zeros((3,4,1)),
                            past_len=4, future_len=2)
     assert len(ds) == 3
+
+
+def test_scale_standardizes_features():
+    """scale_data standardises each feature to mean 0 / std 1."""
+    from tft_timeseries.data import scale_data, inverse_scale
+    rng = np.random.default_rng(42)
+    arr = rng.normal(loc=5.0, scale=2.0, size=(100, 2))
+    scaled, scalers = scale_data(arr)
+    # mean ~ 0  and  std ~ 1  for every column
+    means = scaled.mean(axis=0)
+    stds  = scaled.std(axis=0)
+    assert np.allclose(means, 0.0, atol=1e-7), f"per-feature means: {means}"
+    assert np.allclose(stds,  1.0, atol=1e-7), f"per-feature stds: {stds}"
+    # round-trip restores original values
+    recon = inverse_scale(scaled, scalers)
+    assert np.allclose(recon, arr, atol=1e-7), f"max diff: {np.abs(recon - arr).max()}"
+
+
+def test_inverse_scale_roundtrip():
+    """inverse_scale round-trips to original array to within 1e-10."""
+    from tft_timeseries.data import scale_data, inverse_scale
+    rng = np.random.default_rng(0)
+    arr = rng.normal(size=(50, 3)).astype(np.float64)
+    scaled, scalers = scale_data(arr)
+    recon = inverse_scale(scaled, scalers)
+    assert np.allclose(recon, arr, atol=1e-10), f"max diff: {np.abs(recon - arr).max()}"
