@@ -187,3 +187,68 @@ def test_vsn_with_context():
     out = vsn(xi, context=context)
     assert out.shape == (B, D_model)
     assert torch.allclose(vsn._last_w.sum(dim=-1), torch.ones(B), atol=1e-6)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# StaticCovariateEncoder tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def _get_enc():
+    mod = _import_model()
+    assert hasattr(mod, "StaticCovariateEncoder"), \
+        "StaticCovariateEncoder missing from tft_timeseries.model"
+    return mod.StaticCovariateEncoder
+
+
+def test_static_encoder_output_keys_and_shapes():
+    """Return dict must contain 'vs', 've', 'vc' with correct per-key shapes.
+
+    Note: 'vs' is the per-variable-selection weight vector of shape
+    (B, num_static); 've' and 'vc' are both (B, d_model) per the TFT spec.
+    """
+    Enc = _get_enc()
+    B, D, n_stat = 4, 32, 2
+    enc = Enc(num_static=n_stat, d_model=D)
+    xs = torch.randn(B, n_stat)
+    out = enc(xs)
+    assert set(out.keys()) == {"vs", "ve", "vc"}, \
+        f"Expected keys {{'vs','ve','vc'}}, got {set(out.keys())}"
+    assert out["vs"].shape == (B, n_stat), (
+        f"Expected out['vs'] shape ({B}, {n_stat}), got {tuple(out['vs'].shape)}"
+    )
+    assert out["ve"].shape == (B, D), (
+        f"Expected out['ve'] shape ({B}, {D}), got {tuple(out['ve'].shape)}"
+    )
+    assert out["vc"].shape == (B, D), (
+        f"Expected out['vc'] shape ({B}, {D}), got {tuple(out['vc'].shape)}"
+    )
+
+
+def test_static_encoder_vs_softmax():
+    """vs must be variable-selection weights that sum to 1 over the last dim."""
+    Enc = _get_enc()
+    B, D, n_stat = 4, 32, 2
+    enc = Enc(num_static=n_stat, d_model=D)
+    xs = torch.randn(B, n_stat)
+    out = enc(xs)
+    # vs : per-variable selection weights  →  shape (B, n_stat)
+    assert out["vs"].shape == (B, n_stat), (
+        f"Expected vs shape ({B}, {n_stat}), got {tuple(out['vs'].shape)}"
+    )
+    ones = torch.ones(B, device=out["vs"].device)
+    assert torch.allclose(out["vs"].sum(dim=-1), ones, atol=1e-6), (
+        f"vs does not sum to 1: {out['vs'].sum(dim=-1)}"
+    )
+
+
+def test_static_encoder_no_nan():
+    """No output value may be NaN or Inf."""
+    Enc = _get_enc()
+    B, D, n_stat = 4, 32, 2
+    enc = Enc(num_static=n_stat, d_model=D)
+    xs = torch.randn(B, n_stat)
+    out = enc(xs)
+    for k, v in out.items():
+        assert not torch.any(torch.isnan(v)),  f"out['{k}'] contains NaN"
+        assert not torch.any(torch.isinf(v)),  f"out['{k}'] contains Inf"

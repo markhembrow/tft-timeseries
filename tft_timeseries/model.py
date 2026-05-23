@@ -188,3 +188,96 @@ class VariableSelectionNetwork(nn.Module):
         weighted = grn_stack * w.unsqueeze(-1)             # (B, S, D_model)
         combined = weighted.sum(dim=1)                      # (B, D_model)
         return self.project(combined)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# StaticCovariateEncoder  –  paper §3.1, "Static inputs" branch, Fig. 2
+# ════════════════════════════════════════════════════════════════════════════
+
+class StaticCovariateEncoder(nn.Module):
+    """Encodes all static features into a triple used by other TFT components.
+
+    The static features path (paper §3.1, Fig. 2, "Static inputs" branch)
+    takes the raw static vector **v** of shape ``(B, num_static)`` and
+    passes it through three specialised branches:
+
+    * **vs** – variable-selection weights (per-static-variable softmax),
+      shape ``(B, num_static)``.
+    * **ve** – enriched static embedding for the LSTM initial hidden /
+      cell state, shape ``(B, d_model)``.
+    * **vc** – static context vector that conditions subsequent GRN calls
+      in the sequential feature path, shape ``(B, d_model)``.
+
+    Parameters
+    ----------
+    num_static : number of static input variables  *N*
+    d_model    : TFT hidden dimension  *D*
+    d_hidden   : GRN hidden dimension (default ``4 * d_model``)
+    dropout    : dropout probability
+    """
+
+    def __init__(
+        self,
+        num_static: int,
+        d_model: int,
+        d_hidden: int | None = None,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__()
+        self._num_static = num_static
+        self._d_model = d_model
+
+        d_h: int = d_model * 4 if d_hidden is None else d_hidden
+
+        # Step 1 – embed each raw static variable scalar → d_model
+        self._embed = nn.Linear(num_static, d_model)
+
+        # Step 2 – shared low-level projection GRN  (B, D_model) → hidden
+        self._hs_proj = GatedResidualNetwork(d_model, d_hidden=d_h, dropout=dropout)
+
+        # Step 3 – three independent specialised GRN heads
+        #   vs head: selects variables → (B, num_static)
+        self._vs_lin = nn.Linear(d_model, d_model)  # pre-GRN
+        self._vs_grn = GatedResidualNetwork(d_model, d_hidden=d_h, dropout=dropout)
+        self._vs_out = nn.Linear(d_model, num_static)  # scalar per variable
+        self._softmax = nn.Softmax(dim=-1)
+
+        # ve head: enriched LSTM context → (B, d_model)
+        self._ve_lin = nn.Linear(d_model, d_model)
+        self._ve_grn = GatedResidualNetwork(d_model, d_hidden=d_h, dropout=dropout)
+
+        # vc head: static context → (B, d_model)
+        self._vc_lin = nn.Linear(d_model, d_model)
+        self._vc_grn = GatedResidualNetwork(d_model, d_hidden=d_h, dropout=dropout)
+
+    # ------------------------------------------------------------------
+    def forward(self, xs: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Encode a static feature vector into variable-selection triple.
+
+        Parameters
+        ----------
+        xs : ``(B, num_static)`` — raw static features (one value per variable)
+
+        Returns
+        -------
+        dict with keys:
+
+        ``'vs'`` : ``(B, num_static)`` — variable selection softmax weights
+        ``'ve'`` : ``(B, d_model)``  — enriched embedding for LSTM init state
+        ``'vc'`` : ``(B, d_model)``  — static context vector for sequencial GRN
+        """
+        # Step 1 – embed each scalar variable to d_model
+        hs = self._hs_proj(self._embed(xs))   # (B, d_model)
+
+        # — vs branch: weights over static variables
+        vs_logits = self._softmax(
+            self._vs_out(self._vs_grn(self._vs_lin(hs)))
+        )  # (B, num_static)
+
+        # — ve branch: LSTM init enrichment
+        ve = self._ve_grn(self._ve_lin(hs))   # (B, d_model)
+
+        # — vc branch: static context
+        vc = self._vc_grn(self._vc_lin(hs))   # (B, d_model)
+
+        return {"vs": vs_logits, "ve": ve, "vc": vc}
