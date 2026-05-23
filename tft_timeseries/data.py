@@ -80,6 +80,44 @@ def scale_data(arr: np.ndarray) -> Tuple[np.ndarray, Dict]:
     return scaled, scalers
 
 
+def create_windowed_samples(features: np.ndarray, past_len: int, future_len: int):
+    """Convert flat (T, D) matrix into overlapping windows for TFT.
+
+    Parameters
+    ----------
+    features  : (T, D)   full time-series matrix
+    past_len  : T_enc    encoder length
+    future_len: H        horizon / decoder length
+
+    Returns
+    -------
+    past  : (N_w, T_enc, D)
+    future: (N_w, H, D)
+    target: (N_w, H, D)
+    where N_w = max(0, T - T_enc - H + 1)
+    """
+    features = np.asarray(features, dtype=float)
+    T, D = features.shape
+    N_w = max(0, T - past_len - future_len + 1)
+    if N_w == 0:
+        empty = np.empty((0, past_len, D))
+        return empty, np.empty((0, future_len, D)), np.empty((0, future_len, D))
+
+    def _slice(start: int, length: int) -> np.ndarray:
+        if start >= T:
+            return np.zeros((length, D), dtype=features.dtype)
+        end = min(start + length, T)
+        chunk = features[start:end]
+        if chunk.shape[0] < length:
+            chunk = np.pad(chunk, ((0, length - chunk.shape[0]), (0, 0)))
+        return chunk
+
+    past_arr   = np.stack([_slice(i,                  past_len)        for i in range(N_w)])
+    future_arr = np.stack([_slice(i + past_len,      future_len)      for i in range(N_w)])
+    target_arr = np.stack([_slice(i + past_len + future_len, future_len) for i in range(N_w)])
+    return past_arr, future_arr, target_arr
+
+
 def inverse_scale(scaled: np.ndarray, scalers: dict) -> np.ndarray:
     """Apply inverse of :func:`scale_data`.
 

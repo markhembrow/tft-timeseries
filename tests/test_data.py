@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from tft_timeseries.data import TimeSeriesDataset
+from tft_timeseries.data import TimeSeriesDataset, create_windowed_samples
 
 
 def test_dataset_returns_correct_window_shapes():
@@ -41,7 +41,7 @@ def test_scale_standardizes_features():
     assert np.allclose(recon, arr, atol=1e-7), f"max diff: {np.abs(recon - arr).max()}"
 
 
-def test_inverse_scale_roundtrip():
+def test_inverse_scale_roundtrip() -> None:
     """inverse_scale round-trips to original array to within 1e-10."""
     from tft_timeseries.data import scale_data, inverse_scale
     rng = np.random.default_rng(0)
@@ -49,3 +49,28 @@ def test_inverse_scale_roundtrip():
     scaled, scalers = scale_data(arr)
     recon = inverse_scale(scaled, scalers)
     assert np.allclose(recon, arr, atol=1e-10), f"max diff: {np.abs(recon - arr).max()}"
+
+
+def test_create_windowed_samples_shapes() -> None:
+    data = np.arange(30).reshape(10, 3).astype(float)
+    past, future, target = create_windowed_samples(data, past_len=4, future_len=2)
+    assert past.shape   == (5, 4, 3), f"past shape   {past.shape}"
+    assert future.shape == (5, 2, 3), f"future shape {future.shape}"
+    assert target.shape == (5, 2, 3), f"target shape {target.shape}"
+
+
+def test_create_windowed_samples_values() -> None:
+    data = np.arange(30).reshape(10, 3).astype(float)
+    past, future, target = create_windowed_samples(data, past_len=4, future_len=2)
+    assert np.array_equal(past[0],   data[:4]),   f"past[0]   {past[0]}"
+    assert np.array_equal(future[0],  data[4:6]),  f"future[0]  {future[0]}"
+    assert np.array_equal(target[0],  data[6:8]),  f"target[0]  {target[0]}"
+
+
+def test_create_windowed_samples_zero_windows() -> None:
+    """T < past_len + future_len → all outputs have 0 rows."""
+    data = np.arange(6).reshape(3, 2).astype(float)
+    past, future, target = create_windowed_samples(data, past_len=3, future_len=3)
+    assert past.shape   == (0, 3, 2)
+    assert future.shape == (0, 3, 2)
+    assert target.shape == (0, 3, 2)
