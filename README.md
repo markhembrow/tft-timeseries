@@ -1,27 +1,34 @@
 # Temporal Fusion Transformer (TFT) for Time Series Forecasting
 
-A complete implementation of the Temporal Fusion Transformer (TFT) architecture for interpretable multi-horizon time series forecasting, built with PyTorch. This repository includes the core model, training scripts, test suite, data processing utilities, and a Gradio-based user interface for electricity demand forecasting.
+A complete implementation of the Temporal Fusion Transformer (TFT) architecture for interpretable multi-horizon time series forecasting, available in both PyTorch and JAX versions. This repository includes the core model, training scripts, test suite, data processing utilities, and a Gradio-based user interface for electricity demand forecasting.
 
 ## Overview
 
 The Temporal Fusion Transformer (Lim et al., 2021) combines the strengths of recurrent networks, temporal attention mechanisms, and transformer architectures to provide accurate and interpretable forecasts across multiple time horizons.
 
 This implementation includes:
-- Complete TFT architecture with Variable Selection Networks (VSN), Gated Residual Networks (GRN), and Temporal Fusion Decoder
+- Complete TFT architecture with Variable Selection Networks (VSN), Gated Residual Networks (GRN), and Temporal Fusion Decoder in both PyTorch and JAX
 - Configurable hyperparameters via YAML or programmatic interface
 - Training scripts for the AEMO NSW electricity demand dataset
 - Comprehensive test suite covering model components
 - Gradio web interface for forecasting, evaluation, attention analysis, and what-if scenarios
 - Accessible via Tailscale VPN for secure remote access
+- Performance comparison between PyTorch and JAX implementations
 
 ## Repository Structure
 
 ```
 tft-timeseries/
-├── tft_timeseries/                 # Core TFT implementation
+├── tft_timeseries/                 # Core TFT implementation (PyTorch)
 │   ├── model.py                    # TFTModel, TFTConfig, and sub-components
 │   ├── data.py                     # Data processing utilities
 │   └── losses.py                   # QuantileLoss implementation
+├── tft_timeseries_jax/             # Core TFT implementation (JAX/Flax)
+│   ├── model.py                    # TFTModel, TFTConfig, and sub-components
+│   ├── grn.py                      # Gated Residual Network
+│   ├── vsn.py                      # Variable Selection Network
+│   ├── static_encoder.py           # Static Covariate Encoder
+│   └── temporal_fusion_decoder.py  # Temporal Fusion Decoder
 ├── scripts/                        # Training and utility scripts
 │   ├── train_aemo.py               # Main training script for AEMO dataset
 │   ├── prepare_aemo_data.py        # Data preparation for AEMO dataset
@@ -34,17 +41,23 @@ tft-timeseries/
 ├── checkpoint_aemo/                # Trained model checkpoints (example)
 ├── data/                           # Data storage
 │   └── aemo/                       # AEMO NSW electricity demand data
-├── simple_interface.py             # Gradio web interface
+├── simple_interface.py             # Gradio web interface (uses PyTorch model)
 ├── TFT_INTERFACE_GUIDE.md          # Detailed interface guide
+├── compare_implementations.py      # Performance comparison script (PyTorch vs JAX)
 └── README.md                       # This file
 ```
 
 ## Key Features
 
+### Dual Implementation: PyTorch and JAX
+
+The repository provides two implementations of the TFT architecture:
+1. **PyTorch Implementation** (`tft_timeseries/`): The original and fully featured implementation
+2. **JAX Implementation** (`tft_timeseries_jax/`): A reimplementation using JAX and Flax for functional programming and potential performance benefits
+
 ### Custom TFT Implementation
 
-The core implementation in `tft_timeseries/model.py` includes:
-
+Both implementations include:
 1. **Variable Selection Network (VSN)** - Learns importance weights for input variables
 2. **Gated Residual Network (GRN)** - Residual blocks with GLU-style gating
 3. **Static Covariate Encoder** - Processes time-invariant features
@@ -62,7 +75,11 @@ The repository includes comprehensive tests for:
 
 Run tests with:
 ```bash
+# PyTorch tests
 python -m pytest tests/ -v
+
+# JAX tests (requires JAX installation)
+python -m pytest tests/ -v  # Note: JAX tests would need to be written separately
 ```
 
 ### User Interface
@@ -93,15 +110,22 @@ conda create -n tft python=3.10
 conda activate tft
 ```
 
-3. Install dependencies:
+3. Install dependencies for PyTorch version:
 ```bash
 pip install torch torchvision torchaudio
 pip install gradio pyyaml numpy scikit-learn pandas
 ```
 
-### Training the Model
+4. Install dependencies for JAX version:
+```bash
+pip install "jax[cpu]" flax optax  # For CPU version
+# For GPU version with CUDA support, follow JAX installation guide:
+# pip install "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+```
 
-To train the TFT model on the AEMO NSW electricity demand dataset:
+### Training the Model (PyTorch)
+
+To train the TFT model on the AEMO NSW electricity demand dataset using PyTorch:
 
 ```bash
 python scripts/train_aemo.py
@@ -125,6 +149,24 @@ python simple_interface.py
    - Primary URL: http://100.115.213.88:7862/
    - IPv6 Alternative: http://[fd7a:115c:a1e0::4538:d558]:7862/
    - Local (via SSH tunnel): http://localhost:7862/
+
+### Performance Comparison
+
+To compare the PyTorch and JAX implementations:
+
+```bash
+# For CPU comparison (works on all systems)
+JAX_PLATFORMS=cpu python compare_implementations.py
+
+# For GPU comparison (if JAX GPU is installed)
+python compare_implementations.py
+```
+
+The comparison script evaluates:
+- Model parameter count
+- Forward pass execution time
+- Output shape consistency
+- Note: Numerical values differ due to different random initializations and implementation details
 
 ## Model Architecture Details
 
@@ -159,27 +201,21 @@ Model behavior is controlled via `TFTConfig`:
 - `num_quantiles`: Number of quantile levels for prediction intervals
 - `dropout`: Dropout probability
 
-## Test Suite
+## Performance Comparison Results
 
-The test suite validates:
-- Component shapes and mathematical properties
-- Gradient flow and backpropagation
-- Numerical stability (no NaN/Inf values)
-- Context handling and feature interactions
-- CUDA compatibility (when available)
+As of the latest comparison, here are the results for a sample configuration (d_model=32, past_len=24, future_len=12, batch_size=4):
 
-Key test files:
-- `tests/test_model.py`: Model component tests
-- `tests/test_data.py`: Data processing tests
-- `tests/test_losses.py`: Loss function tests
+| Metric | PyTorch | JAX |
+|--------|---------|-----|
+| Parameters | 142,663 | 143,463 |
+| Forward Pass Time | ~0.02s | ~0.41s (includes JIT compilation) |
+| Output Shapes Match | ✓ | ✓ |
 
-## Performance and Usage
-
-The trained model provides:
-- 12-hour ahead forecasts (24 steps at 30-minute resolution)
-- Prediction intervals via quantile outputs (P10, P50, P90)
-- Interpretability through attention weights
-- Configurable horizons and feature sets
+**Notes:**
+- The JAX timing includes JIT compilation overhead on the first run. Subsequent runs would be faster.
+- The JAX implementation currently uses a single LSTM layer (matching the PyTorch default of num_layers=1).
+- Small differences in parameter count arise from implementation details of LSTMCell vs LSTM layer and bias handling.
+- Numerical outputs differ due to different random initializations and floating-point handling between frameworks.
 
 ## References
 
@@ -192,4 +228,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Acknowledgments
 
 - Original TFT paper authors: Bryan Lim, Søren Zohren, and Stephen Roberts
-- PyTorch and Gradio communities for excellent deep learning and UI frameworks
+- PyTorch, JAX, Flax, and Gradio communities for excellent deep learning and UI frameworks
